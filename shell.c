@@ -369,7 +369,7 @@ int main(int argc, char* argv[])
 		if(getcwd(cwd, sizeof(cwd)) != NULL){
 			write(STDOUT_FILENO,cwd,strlen(cwd));
 		}
-		write(STDOUT_FILENO, "~$", strlen("~$"));
+		write(STDOUT_FILENO, "~$ ", strlen("~$ "));
 		_Bool in_background = false;
 		read_command(input_buffer, tokens, &in_background);
 
