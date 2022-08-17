@@ -346,7 +346,7 @@ int shellExec(char **args){
 //signal handler
 void handle_signal(int sig){
 	signal(SIGINT, handle_signal);
-	strcpy(input_buffer,"help");
+	strcpy(input_buffer,"exit");
 }
 
 /**
