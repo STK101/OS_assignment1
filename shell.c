@@ -364,12 +364,12 @@ int main(int argc, char* argv[])
 	// shell loop
 	while (true) {
 
-		char cwd[PATH_MAX]; // current working directory - for prompt
-		write(STDOUT_FILENO," ~",strlen(" ~"));
+		char cwd[PATH_MAX+1]; // current working directory - for prompt
+		//write(STDOUT_FILENO," ~",strlen(" ~")); not required here
 		if(getcwd(cwd, sizeof(cwd)) != NULL){
 			write(STDOUT_FILENO,cwd,strlen(cwd));
 		}
-		write(STDOUT_FILENO, "$ ", strlen("$ "));
+		write(STDOUT_FILENO, "~$", strlen("~$"));
 		_Bool in_background = false;
 		read_command(input_buffer, tokens, &in_background);
 
