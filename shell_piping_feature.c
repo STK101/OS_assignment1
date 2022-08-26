@@ -42,7 +42,7 @@ int executecmd(char** params) {
 int execpipe (char ** argv1, char ** argv2) {
     int fds[2];
     pipe(fds);
-    int i;
+    //int i;
     pid_t pid = fork();
     if (pid == -1) { //error
         char *error = strerror(errno);

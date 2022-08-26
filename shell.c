@@ -13,11 +13,15 @@
 #define COMMAND_LENGTH 1024
 #define NUM_TOKENS (COMMAND_LENGTH / 2 + 1)
 #define PATH_MAX 1024
-
+#define EV_COUNT 1024
 // history command 
 #define HISTORY_DEPTH 1000 
 static int CMDnum = 0; 	// where to insert next command into history; intiallly 0, incremented with every addition
 char history[HISTORY_DEPTH][COMMAND_LENGTH]; //Array of 1000 commands entered
+
+char env_name[HISTORY_DEPTH][COMMAND_LENGTH];
+char env_value[HISTORY_DEPTH][COMMAND_LENGTH];
+int env_add = 0;
 
 // DECLARE 'input_buffer' and 'tokens' as global variables so we can use them during the signal handling for displaying help on pressing CTRL+C!!
 char input_buffer[COMMAND_LENGTH]; 
@@ -114,26 +118,35 @@ int tokenize_command(char *buff, char *tokens[])
  *       an & as their last token; otherwise set to false.
  * if returns 0 --> donont read previous command, if 1 --> read and exec()
  */
-void read_command(char *buff, char *tokens[], _Bool *in_background) // modified for '!!' and '!n' command
+int read_command(char *buff, char *tokens[], _Bool *in_background, _Bool *is_env) // modified for '!!' and '!n' command
 {
 	*in_background = false;
 
 	// Read input
 	int length = read(STDIN_FILENO, buff, COMMAND_LENGTH-1);
 
-	if ( (length < 0) && (errno !=EINTR) ){
-    	perror("Unable to read command. Terminating.\n");
-    	exit(-1);  /* terminate with error */
+	if ( (length <= 0) && (errno !=EINTR) ){
+    	write(STDOUT_FILENO,"Unable to read command. Terminating.\n", strlen("Unable to read command. Terminating.\n"));
+    	return -1;  /* terminate with error */
 	}
 
 	// Null terminate and strip \n.
 	buff[length] = '\0';
-	
+	for(int i = 0; i < length ; i++){
+		if (buff[i] == '='){
+			*is_env = true;
+			buff[i] = ' ';
+		}
+	}
+	if (buff[0] == '&'){
+		*in_background = true;
+		buff[0] = ' ';
+	}
 	if (buff[strlen(buff) - 1] == '\n') {
 		buff[strlen(buff) - 1] = '\0';
 	}
 
-	if(buff[0] == '!' && buff[1] == '!'){ // '!!' command to be run - change buff to last command entered
+	if(strlen(buff)> 1 && buff[0] == '!' && buff[1] == '!'){ // '!!' command to be run - change buff to last command entered
 		buff = history[CMDnum - 1];
 		addcmd(buff);
 		write(STDOUT_FILENO,buff,strlen(buff));
@@ -175,14 +188,17 @@ void read_command(char *buff, char *tokens[], _Bool *in_background) // modified 
 	// Tokenize (saving original command string)
 	int token_count = tokenize_command(buff, tokens);
 	if (token_count == 0) {
-		return;
+		return -1;
 	}
+	return 1;
 
 	// Extract if running in background:
+	/*
 	if (token_count > 0 && strcmp(tokens[token_count - 1], "&") == 0) {
 		*in_background = true;
 		tokens[token_count - 1] = 0;
 	}
+	*/
 }
 
 
@@ -327,6 +343,22 @@ int myHistory(char **args){
 
 
 // Function for executing builtin commands
+int shellCheck(char **args){
+	int i = 0;
+	if(args[0] == NULL){
+		// Empty command
+		return 1;
+	}
+	while(i < 5){
+		if(strcmp(args[0],builtinCMDstr[i]) == 0){
+			return 5;
+		}else{
+			i++;
+		}
+	}
+	return 0;
+}
+
 int shellExec(char **args){
 	int i = 0;
 	if(args[0] == NULL){
@@ -370,30 +402,119 @@ int main(int argc, char* argv[])
 			write(STDOUT_FILENO,cwd,strlen(cwd));
 		}
 		write(STDOUT_FILENO, "~$ ", strlen("~$ "));
+		_Bool is_piped = false;
+		int pipe_break = -1;
+		_Bool is_env = false;
+		//int env_break = -1;
 		_Bool in_background = false;
-		read_command(input_buffer, tokens, &in_background);
-
+		int validc = read_command(input_buffer, tokens, &in_background, &is_env);
+		if (validc == -1){
+			continue;
+		}
 		// DEBUG: Dump out arguments:
 		for (int i = 0; tokens[i] != NULL; i++) {
+			if (strcmp(tokens[i], "|") == 0){
+				is_piped = true;
+				pipe_break = i;
+			}
 			write(STDOUT_FILENO, "   Token: ", strlen("   Token: "));
 			write(STDOUT_FILENO, tokens[i], strlen(tokens[i]));
 			write(STDOUT_FILENO, "\n", strlen("\n"));
 		}
 		write(STDOUT_FILENO,"\n",strlen("\n"));		
 		// Built-In exit commmand for shell
+		if (is_piped){
+			char *token1[NUM_TOKENS];
+			char *token2[NUM_TOKENS];
+			for (int x=0; x< pipe_break; x++) {    
+            	token1[x]=tokens[x];
+            }     
+            int z = 0;     
+			int size = sizeof tokens / sizeof tokens[0];
+            for (int x= pipe_break+1; x< size; x++) {     
+                token2[z]=tokens[x];
+                z++;
+            }
+			int fds[2];
+			pipe(fds);
+			//int i;
+			pid_t pid = fork();
+			if (pid == -1) { //error
+				char *error = strerror(errno);
+				printf("error fork!!\n");
+				exit(-1);
+			} 
+			if (pid > 0) { // child process
+				waitpid(pid, NULL,0);
+				int save_in;
+				save_in = dup(STDIN_FILENO);
+				close(fds[1]);
+				dup2(fds[0], STDIN_FILENO);
+				//close(fds[0]);
+				pid_t pid2 = fork();
+				if (pid2 < 0){
+					char *error = strerror(errno);
+					printf("error fork!!\n");
+					exit(-1);
+				}
+				else if (pid2 == 0){
+					if (shellCheck(token2) == 0){
+						execvp(token2[0], token2); // run command BEFORE pipe character in userinput
+						char *error = strerror(errno);
+						printf("unknown command\n");
+						return 0;
+					}
+					else if (shellCheck(token2) == 5){
+						shellExec(token2);
+						exit(1);
+					}
+				}
+				else{
+					waitpid(pid2, NULL, 0);
+					dup2(save_in, STDIN_FILENO);
+					//write(STDOUT_FILENO,"Command Executed\n",strlen("Command Executed\n"));
+				}
+			} else { // parent process
+				//wait(NULL);
+				close(fds[0]);
+				dup2(fds[1], STDOUT_FILENO);
+				if (shellCheck(token1) == 0){
+					execvp(token1[0], token1); // run command AFTER pipe character in userinput
+					char *error = strerror(errno);
+					printf("unknown command\n");
+					return 0;
+				}
+				else if (shellCheck(token1) == 5){
+					shellExec(token1);
+					exit(1);
+				}
+			}
+
+		}
+		else{
+
+		
 		if(strcmp(tokens[0],"exit") == 0) // if "exit" commmand entered then exit shell
 		{
 			write(STDOUT_FILENO,"Exiting shell ...\n.",strlen("Exiting shell ....\n"));
 			return 0;
 		} else{ // check if inbuilt commmand
-			if(shellExec(tokens) == 0) // if not inbuilt command, fork and call external functions for command
+			if(shellCheck(tokens) == 0) // if not inbuilt command, fork and call external functions for command
 			{
 				pid_t pid = fork();
 				if(pid == -1){ // Error in forking
 					write(STDOUT_FILENO," ERROR FORKING\n", strlen(" ERROR FORKING\n"));
 				continue;
 				} else if(pid == 0){ // Child Processing
-				execvp(tokens[0],tokens);
+				if (in_background){
+					write(STDOUT_FILENO,"\n",strlen("\n"));
+					write(STDOUT_FILENO,"Command Executed: after runnning in background\n",strlen("Command Executed: after runnning in background\n"));
+					execvp(tokens[0],tokens);
+				}
+				if (!in_background){
+					execvp(tokens[0],tokens);
+				}
+				
 					// Reaches here only if exec() is not able to run
 					write(STDOUT_FILENO,"COULD NOT RUN COMMAND '",strlen("COULD NOT RUN COMMAND '"));
 					write(STDOUT_FILENO,tokens[0],strlen(tokens[0]));
@@ -402,16 +523,49 @@ int main(int argc, char* argv[])
 				} else{ // Parent Process
 					if (in_background) {
 					write(STDOUT_FILENO, "Run in background.\n", strlen("Run in background.\n"));
-					wait(NULL);
-					write(STDOUT_FILENO,"Command Executed: after runnning in background\n",strlen("Command Executed: after runnning in background\n"));
+					// wait(NULL);
+					//write(STDOUT_FILENO,"Command Executed: after runnning in background\n",strlen("Command Executed: after runnning in background\n"));
 					} 
 					else{
-						wait(NULL);
+						waitpid(pid,NULL,0);
 						write(STDOUT_FILENO,"Command Executed\n",strlen("Command Executed\n"));
 					}
 				}
 				
 			}
+			else if(shellCheck(tokens) == 5){
+				pid_t pid = fork();
+				if(pid == -1){ // Error in forking
+					write(STDOUT_FILENO," ERROR FORKING\n", strlen(" ERROR FORKING\n"));
+				continue;
+				} else if(pid == 0){ // Child Processing
+				if (in_background){
+					write(STDOUT_FILENO,"\n",strlen("\n"));
+					write(STDOUT_FILENO,"Command Executed: after runnning in background\n",strlen("Command Executed: after runnning in background\n"));
+					shellExec(tokens);
+				}
+				if (!in_background){
+					shellExec(tokens);
+				}
+					exit(1);
+					// Reaches here only if exec() is not able to run
+					write(STDOUT_FILENO,"COULD NOT RUN COMMAND '",strlen("COULD NOT RUN COMMAND '"));
+					write(STDOUT_FILENO,tokens[0],strlen(tokens[0]));
+					write(STDOUT_FILENO,"'\n",strlen("'\n"));
+					exit(-1);
+				} else{ // Parent Process
+					if (in_background) {
+					write(STDOUT_FILENO, "Run in background.\n", strlen("Run in background.\n"));
+					// wait(NULL);
+					//write(STDOUT_FILENO,"Command Executed: after runnning in background\n",strlen("Command Executed: after runnning in background\n"));
+					} 
+					else{
+						waitpid(pid,NULL,0);
+						write(STDOUT_FILENO,"Command Executed\n",strlen("Command Executed\n"));
+					}
+				}
+			}
 		}
+	}
 	}
 }
