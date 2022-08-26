@@ -82,6 +82,7 @@ int tokenize_command(char *buff, char *tokens[])
 {
 	int token_count = 0;
 	_Bool in_token = false;
+	int env_tok = -1;
 	int num_chars = strnlen(buff, COMMAND_LENGTH);
 	for (int i = 0; i < num_chars; i++) {
 		switch (buff[i]) {
@@ -96,9 +97,24 @@ int tokenize_command(char *buff, char *tokens[])
 		// Handle other characters (may be start)
 		default:
 			if (!in_token) {
-				tokens[token_count] = &buff[i];
+				//tokens[token_count] = &buff[i];
+				if(buff[i] == '$'){
+					env_tok = token_count;
+					tokens[token_count] = &buff[i+1];
+				}
+				else{
+					tokens[token_count] = &buff[i];
+				}
 				token_count++;
 				in_token = true;
+			}
+		}
+	}
+	if (env_tok >= 0){
+		char *enm = tokens[env_tok];
+		for(int i = 0; i < env_add; i++){
+			if(strcmp(enm, env_name[i]) == 0){
+				tokens[env_tok] = env_value[i];
 			}
 		}
 	}
@@ -118,7 +134,7 @@ int tokenize_command(char *buff, char *tokens[])
  *       an & as their last token; otherwise set to false.
  * if returns 0 --> donont read previous command, if 1 --> read and exec()
  */
-int read_command(char *buff, char *tokens[], _Bool *in_background, _Bool *is_env) // modified for '!!' and '!n' command
+int read_command(char *buff, char *tokens[], _Bool *in_background) // modified for '!!' and '!n' command
 {
 	*in_background = false;
 
@@ -132,12 +148,14 @@ int read_command(char *buff, char *tokens[], _Bool *in_background, _Bool *is_env
 
 	// Null terminate and strip \n.
 	buff[length] = '\0';
+	/*
 	for(int i = 0; i < length ; i++){
 		if (buff[i] == '='){
 			*is_env = true;
-			buff[i] = ' ';
+			//buff[i] = ' ';
 		}
 	}
+	*/
 	if (buff[0] == '&'){
 		*in_background = true;
 		buff[0] = ' ';
@@ -356,6 +374,17 @@ int shellCheck(char **args){
 			i++;
 		}
 	}
+	int size = sizeof args[0] / sizeof (args[0])[0];
+	while (int i = 0; i < size ; i++){
+		if ((args[0])[i] == '='){
+			return 5;
+		}
+	}
+	/*
+	if(args[0][0] == '$'){
+		return 5;
+	}
+	*/
 	return 0;
 }
 
@@ -372,6 +401,26 @@ int shellExec(char **args){
 			i++;
 		}
 	}
+	int size = sizeof args[0] / sizeof (args[0])[0];
+	env_name[env_add] = &(args[0])[0];
+	while (int i = 0; i < size ; i++){
+		if ((args[0])[i] == '='){
+			args[i] = '\0';
+			env_value[env_add] = &(args[0])[i+1];
+			env_add++;
+			return 5;
+		}
+	}
+	/*
+	if(args[0][0] == '$'){
+		char *enm = &(args[0][1]);
+		for(int i = 0; i < env_add; i++){
+			if(strcmp(enm, env_name[i]) == 0){
+
+			}
+		}
+	}
+	*/
 	return 0;
 }
 
@@ -404,10 +453,10 @@ int main(int argc, char* argv[])
 		write(STDOUT_FILENO, "~$ ", strlen("~$ "));
 		_Bool is_piped = false;
 		int pipe_break = -1;
-		_Bool is_env = false;
+		//_Bool is_env = false;
 		//int env_break = -1;
 		_Bool in_background = false;
-		int validc = read_command(input_buffer, tokens, &in_background, &is_env);
+		int validc = read_command(input_buffer, tokens, &in_background);
 		if (validc == -1){
 			continue;
 		}
