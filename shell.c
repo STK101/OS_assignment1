@@ -16,9 +16,11 @@
 #define EV_COUNT 1024
 // history command 
 #define HISTORY_DEPTH 1000 
+
 static int CMDnum = 0; 	// where to insert next command into history; intiallly 0, incremented with every addition
 char history[HISTORY_DEPTH][COMMAND_LENGTH]; //Array of 1000 commands entered
-
+pid_t pid_ar[HISTORY_DEPTH];
+int pid_ctr = 0;
 char env_name[HISTORY_DEPTH][COMMAND_LENGTH];
 char env_value[HISTORY_DEPTH][COMMAND_LENGTH];
 int env_add = 0;
@@ -36,17 +38,17 @@ void addcmd(char buff[]){ // ADD commmand to history - Problem 3
 }
 
 void getCMD(int n){ // write() one command depending on the CMDnum value
-	char buffI[10];
-	sprintf(buffI,"%d",n);
-	write(STDOUT_FILENO,buffI,strlen(buffI));
-	write(STDOUT_FILENO,"\t",strlen("\t"));
+	char buffI[6];
+	//sprintf(buffI,"%d",n);
+	//write(STDOUT_FILENO,buffI,strlen(buffI));
+	//write(STDOUT_FILENO,"\t",strlen("\t"));
 	write(STDOUT_FILENO,history[n],strlen(history[n]));
 	write(STDOUT_FILENO,"\n",strlen("\n"));
 }
 
 void printcmd(){ //print the last 10 commmands
-	int i = CMDnum - 1;
-	if(i <= 9){
+	int i = CMDnum - 2;
+	if(i <= 4){
 		while(i >= 0){
 			getCMD(i);
 			i--;
@@ -54,7 +56,7 @@ void printcmd(){ //print the last 10 commmands
 	}
 	else{
 		int s = i;
-		int e = s-9;
+		int e = s-4;
 		while(s >= e){
 			getCMD(s);
 			s--;
@@ -111,10 +113,15 @@ int tokenize_command(char *buff, char *tokens[])
 		}
 	}
 	if (env_tok >= 0){
+		char out[40];
+		sprintf(out, "%d", env_add);
+		write(STDOUT_FILENO,out,strlen(out));
+
 		char *enm = tokens[env_tok];
 		for(int i = 0; i < env_add; i++){
 			if(strcmp(enm, env_name[i]) == 0){
-				tokens[env_tok] = env_value[i];
+				tokens[env_tok] = &(env_value[i][0]);
+
 			}
 		}
 	}
@@ -225,9 +232,10 @@ int myCD(char **args);
 int myPWD(char **args);
 int myHELP(char **args);
 int myHistory(char **args);
+int myPShist(char **args);
 
-char *builtinCMDstr[] = {"cd", "pwd", "help","history", "!!", "!n", "exit"};
-int (*builtinCMDfunc[]) (char **) = { &myCD, &myPWD , &myHELP, &myHistory};
+char *builtinCMDstr[] = {"cd", "pwd", "ps_history","history", "!!", "!n", "exit"};
+int (*builtinCMDfunc[]) (char **) = { &myCD, &myPWD , &myPShist, &myHistory};
 
 // Built-In cd commands for shell
 int myCD(char **args){
@@ -242,7 +250,34 @@ int myCD(char **args){
 	}
 	return 1;
 }
+void ps_update(){
+	pid_t wpid;
+	int status;
+	for(int i=0;i<pid_ctr;i++){
+		//printf("%d\n%d\n",i,processes_id[i]);
+		wpid=waitpid(pid_ar[i],&status,WNOHANG);
+		//printf("%d, %d\n",kill(processes_id[i],0),processes_id[i]);
+	}
+	return;
+}
 
+int myPShist(char **args){
+	ps_update();
+	for(int i = 0; i < pid_ctr; i++){
+		//write(STDOUT_FILENO,pid_ar[i],strlen(pid_ar[i]));
+		printf("%ld", (long) pid_ar[i]);
+		//printf(pid_ar[i]);
+		if (kill(pid_ar[i],0) == 0){
+			printf(" RUNNING\n");
+			//write(STDOUT_FILENO," RUNNING\n",strlen(" RUNNING\n"));
+		}
+		else{
+			printf(" STOPPED\n");
+			//write(STDOUT_FILENO," STOPPED\n",strlen(" STOPPED\n"));
+		}
+	}
+	return 1;
+}
 // Built-In pwd commmand for shell
 int myPWD(char **args){
 	char cwd[PATH_MAX];
@@ -274,6 +309,8 @@ int isBuiltin(char *str){
 	}
 	return -1;
 }
+
+
 
 // Built-In help command for shell
 int myHELP(char **args){
@@ -375,9 +412,9 @@ int shellCheck(char **args){
 		}
 	}
 	int size = sizeof args[0] / sizeof (args[0])[0];
-	while (int i = 0; i < size ; i++){
-		if ((args[0])[i] == '='){
-			return 5;
+	for (int x = 0; x < size ; x++){
+		if ((args[0])[x] == '='){
+			return 6;
 		}
 	}
 	/*
@@ -402,15 +439,26 @@ int shellExec(char **args){
 		}
 	}
 	int size = sizeof args[0] / sizeof (args[0])[0];
-	env_name[env_add] = &(args[0])[0];
-	while (int i = 0; i < size ; i++){
+	int split = -1;
+	for (int i = 0; i < size ; i++){
 		if ((args[0])[i] == '='){
-			args[i] = '\0';
-			env_value[env_add] = &(args[0])[i+1];
-			env_add++;
-			return 5;
+			split = i;
 		}
 	}
+	if (split >= 0){
+		printf("HI");
+		for(int i = 0; i < split; i++){
+			env_name[env_add][i] = args[0][i];
+		}
+		env_name[env_add][split] = '\0';
+		for(int i = split + 1; i < size; i++){
+			env_value[env_add][i - split - 1] = args[0][i];
+		}
+		env_value[env_add][size-split-1] = '\0';
+		env_add++;
+		return 5;
+	}
+	
 	/*
 	if(args[0][0] == '$'){
 		char *enm = &(args[0][1]);
@@ -493,8 +541,10 @@ int main(int argc, char* argv[])
 				printf("error fork!!\n");
 				exit(-1);
 			} 
-			if (pid > 0) { // child process
+			if (pid > 0) { // parent process
 				waitpid(pid, NULL,0);
+				pid_ar[pid_ctr] = pid;
+				pid_ctr++;
 				int save_in;
 				save_in = dup(STDIN_FILENO);
 				close(fds[1]);
@@ -520,10 +570,12 @@ int main(int argc, char* argv[])
 				}
 				else{
 					waitpid(pid2, NULL, 0);
+					pid_ar[pid_ctr] = pid2;
+					pid_ctr++;
 					dup2(save_in, STDIN_FILENO);
 					//write(STDOUT_FILENO,"Command Executed\n",strlen("Command Executed\n"));
 				}
-			} else { // parent process
+			} else { // child process
 				//wait(NULL);
 				close(fds[0]);
 				dup2(fds[1], STDOUT_FILENO);
@@ -572,10 +624,14 @@ int main(int argc, char* argv[])
 				} else{ // Parent Process
 					if (in_background) {
 					write(STDOUT_FILENO, "Run in background.\n", strlen("Run in background.\n"));
+					pid_ar[pid_ctr] = pid;
+					pid_ctr++;
 					// wait(NULL);
 					//write(STDOUT_FILENO,"Command Executed: after runnning in background\n",strlen("Command Executed: after runnning in background\n"));
 					} 
 					else{
+						pid_ar[pid_ctr] = pid;
+						pid_ctr++;
 						waitpid(pid,NULL,0);
 						write(STDOUT_FILENO,"Command Executed\n",strlen("Command Executed\n"));
 					}
@@ -605,14 +661,21 @@ int main(int argc, char* argv[])
 				} else{ // Parent Process
 					if (in_background) {
 					write(STDOUT_FILENO, "Run in background.\n", strlen("Run in background.\n"));
+					pid_ar[pid_ctr] = pid;
+					pid_ctr++;
 					// wait(NULL);
 					//write(STDOUT_FILENO,"Command Executed: after runnning in background\n",strlen("Command Executed: after runnning in background\n"));
 					} 
 					else{
+						pid_ar[pid_ctr] = pid;
+						pid_ctr++;
 						waitpid(pid,NULL,0);
 						write(STDOUT_FILENO,"Command Executed\n",strlen("Command Executed\n"));
 					}
 				}
+			}
+			else if (shellCheck(tokens) == 6){
+				shellExec(tokens);
 			}
 		}
 	}
